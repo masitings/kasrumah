@@ -137,3 +137,31 @@ test('the extractor maps an unknown category to lainnya and drops zero amounts',
     expect($rows[0]['category'])->toBe('lainnya');
     expect($rows[0]['amount'])->toBe(5000);
 });
+
+test('receipts show endpoint streams image for owner and rejects intruder', function () {
+    Storage::fake('local');
+    $owner = User::factory()->create();
+    $intruder = User::factory()->create();
+
+    $path = 'receipts/'.$owner->id.'/test-receipt.jpg';
+    Storage::disk('local')->put($path, 'fake-jpeg-bytes');
+
+    $expense = Expense::create([
+        'user_id' => $owner->id,
+        'spent_on' => '2026-10-03',
+        'amount' => 25000,
+        'category' => 'kesehatan',
+        'source' => 'receipt',
+        'status' => 'confirmed',
+        'image_path' => $path,
+    ]);
+
+    $this->actingAs($intruder)
+        ->get("/receipts/{$expense->id}")
+        ->assertNotFound();
+
+    $response = $this->actingAs($owner)
+        ->get("/receipts/{$expense->id}");
+
+    $response->assertOk();
+});

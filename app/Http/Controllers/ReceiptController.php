@@ -4,13 +4,13 @@ namespace App\Http\Controllers;
 
 use App\Models\Expense;
 use Illuminate\Http\Request;
-use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Storage;
+use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 
 class ReceiptController extends Controller
 {
     /** Thumbnails stay behind auth: only the owner can fetch their own receipt. */
-    public function show(Request $request, Expense $expense): Response
+    public function show(Request $request, Expense $expense): SymfonyResponse
     {
         abort_unless($expense->user_id === $request->user()->id, 404);
         abort_unless($expense->image_path !== null, 404);
