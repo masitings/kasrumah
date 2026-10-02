@@ -10,6 +10,37 @@ A household expense tracker for a spouse managing the family's budget. Snap a ph
 - Money is stored as **integer rupiah** (no decimals)
 - UI copy is casual Indonesian; code, comments, and commit messages are English
 
+## Screenshots
+
+Live captures from the app running on an **iPhone 16 Pro Max** (dark mode, Safari over local Wi‑Fi).
+
+### 1. Review Drafts (Gemma Extracted Struk)
+Gemma parses the receipt photo, downscales it locally, and presents an inline-editable draft. Thumbnails are served via an auth-checked route.
+
+<p align="center">
+  <img src="public/screenshots/kasrumah-2.png" width="360" alt="Review Draft - Indomaret Receipt" />
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="public/screenshots/kasrumah-3.png" width="360" alt="Review Draft - Clinic Invoice" />
+</p>
+
+### 2. Pengeluaran (Monthly Grouped Expenses)
+Confirmed receipts grouped by date with per-category breakdown and quick month switcher.
+
+<p align="center">
+  <img src="public/screenshots/kasrumah.png" width="360" alt="Pengeluaran - Initial Month List" />
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="public/screenshots/kasrumah-4.png" width="360" alt="Pengeluaran - Accumulated Categories" />
+</p>
+
+### 3. Ringkasan (Weekly AI Narrative & Budget Usage)
+Gemma crafts a casual weekly summary in friendly Indonesian. Facts, totals, and budget percentage bars are computed deterministically in PHP before reaching the model.
+
+<p align="center">
+  <img src="public/screenshots/kasrumah-summary.png" width="360" alt="Ringkasan Mingguan - Gemma AI Summary" />
+</p>
+
+---
+
 ## One-time Setup
 
 ```bash
