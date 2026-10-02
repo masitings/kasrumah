@@ -5,15 +5,15 @@ namespace App\Support;
 class Categories
 {
     public const ALL = [
-        'dapur'      => 'Belanja dapur (sayur, lauk, bumbu, beras)',
-        'jajan'      => 'Jajan & makan di luar',
-        'online'     => 'Belanja online (Shopee, Tokopedia, dll)',
-        'rumah'      => 'Kebutuhan rumah (sabun, gas, galon, perabot)',
-        'tagihan'    => 'Tagihan (listrik, air, internet, pulsa)',
-        'transport'  => 'Transport (bensin, ojol, parkir)',
-        'kesehatan'  => 'Kesehatan & obat',
-        'keluarga'   => 'Keluarga & sosial (kondangan, kiriman)',
-        'lainnya'    => 'Lainnya',
+        'dapur' => 'Belanja dapur (sayur, lauk, bumbu, beras)',
+        'jajan' => 'Jajan & makan di luar',
+        'online' => 'Belanja online (Shopee, Tokopedia, dll)',
+        'rumah' => 'Kebutuhan rumah (sabun, gas, galon, perabot)',
+        'tagihan' => 'Tagihan (listrik, air, internet, pulsa)',
+        'transport' => 'Transport (bensin, ojol, parkir)',
+        'kesehatan' => 'Kesehatan & obat',
+        'keluarga' => 'Keluarga & sosial (kondangan, kiriman)',
+        'lainnya' => 'Lainnya',
     ];
 
     public static function keys(): array

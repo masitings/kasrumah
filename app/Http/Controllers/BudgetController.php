@@ -3,8 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Support\Categories;
-use Illuminate\Http\Request;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
 

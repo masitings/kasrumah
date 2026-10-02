@@ -2,11 +2,10 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Expense;
 use App\Services\ExpenseExtractor;
+use App\Support\SummaryCache;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use App\Support\SummaryCache;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
@@ -105,5 +104,4 @@ class CatatController extends Controller
 
         return redirect()->route('review.index')->with('success', 'Struk berhasil dibaca dan masuk ke draf.');
     }
-
 }

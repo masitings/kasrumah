@@ -7,7 +7,7 @@ use App\Support\Categories;
 use App\Support\SummaryCache;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -88,7 +88,7 @@ class ReviewController extends Controller
         $this->authorize($request, $expense);
 
         if ($expense->image_path) {
-            \Illuminate\Support\Facades\Storage::disk('local')->delete($expense->image_path);
+            Storage::disk('local')->delete($expense->image_path);
         }
 
         $expense->delete();
