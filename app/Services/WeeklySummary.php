@@ -5,12 +5,14 @@ namespace App\Services;
 use App\Models\Expense;
 use App\Models\User;
 use App\Support\Categories;
+use App\Support\Rupiah;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 
 /**
  * Numbers are computed in PHP; Gemma only turns them into a friendly paragraph.
- * That keeps the math trustworthy and the model's job small.
+ * That keeps the math trustworthy and the model's job small. Every money figure
+ * is already formatted as an Indonesian rupiah label before it reaches the prompt.
  */
 class WeeklySummary
 {
@@ -20,15 +22,20 @@ class WeeklySummary
         $end = $start->copy()->endOfWeek();
 
         $thisWeek = $this->totals($user, $start, $end);
-        $avgWeek = $this->averagePerWeek($user, $start->copy()->subWeeks(4), $start->copy()->subDay());
+        $previousWeeks = $this->totals($user, $start->copy()->subWeeks(4), $start->copy()->subDay());
         $monthUsage = $this->monthBudgetUsage($user, $start);
+
+        $average = $previousWeeks === [] ? null : $this->averagePerWeek($previousWeeks);
 
         $facts = [
             'periode' => $start->toDateString().' s/d '.$end->toDateString(),
-            'total_minggu_ini' => array_sum($thisWeek),
-            'per_kategori_minggu_ini' => $thisWeek,
-            'rata_rata_per_minggu_4_minggu_terakhir' => $avgWeek,
+            'total_minggu_ini' => Rupiah::short(array_sum($thisWeek)),
+            'per_kategori_minggu_ini' => Rupiah::shortMap($thisWeek),
+            // No confirmed expenses in the previous four weeks -> no average to compare against.
+            'rata_rata' => $average === null ? null : Rupiah::shortMap($average),
             'pemakaian_budget_bulan_ini_persen' => $monthUsage,
+            // Non-money helper: categories that rose above their 4-week average.
+            'kategori_naik' => $this->categoriesAboveAverage($thisWeek, $average),
         ];
 
         return [
@@ -37,6 +44,9 @@ class WeeklySummary
         ];
     }
 
+    /**
+     * @return array<string, int>
+     */
     private function totals(User $user, Carbon $from, Carbon $to): array
     {
         return Expense::where('user_id', $user->id)
@@ -49,10 +59,31 @@ class WeeklySummary
             ->all();
     }
 
-    private function averagePerWeek(User $user, Carbon $from, Carbon $to): array
+    /**
+     * @return array<string, int>
+     */
+    private function averagePerWeek(array $totals): array
     {
-        return collect($this->totals($user, $from, $to))
+        return collect($totals)
             ->map(fn ($v) => (int) round($v / 4))
+            ->all();
+    }
+
+    /**
+     * @param  array<string, int>  $thisWeek
+     * @param  array<string, int>|null  $average
+     * @return list<string>
+     */
+    private function categoriesAboveAverage(array $thisWeek, ?array $average): array
+    {
+        if ($average === null) {
+            return [];
+        }
+
+        return collect($thisWeek)
+            ->filter(fn (int $total, string $category) => $total > ($average[$category] ?? 0) && ($average[$category] ?? 0) > 0)
+            ->keys()
+            ->values()
             ->all();
     }
 
@@ -72,7 +103,7 @@ class WeeklySummary
 
     private function narrate(array $facts): string
     {
-        $json = json_encode($facts, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+        $json = json_encode($facts, JSON_PRETTY_PRINT);
         $labels = Categories::forPrompt();
 
         $prompt = <<<PROMPT
@@ -82,10 +113,10 @@ Panjang: 3 sampai 5 kalimat.
 
 Isi:
 1. Total minggu ini.
-2. Kategori yang paling naik dibanding rata-rata, dan kalau masuk akal sebut kemungkinan sebabnya secara netral.
+2. Kalau "rata_rata" bukan null: kategori yang paling naik dibanding rata-rata, dan kalau masuk akal sebut kemungkinan sebabnya secara netral. Kalau "rata_rata" null, JANGAN bandingkan dengan rata-rata -- cukup sebut total dan kategori terbesar minggu ini.
 3. Budget bulan ini yang sudah di atas 70%, kalau ada.
 
-Pakai HANYA angka dari data ini, jangan menghitung ulang atau mengarang angka. Tulis rupiah seperti "Rp850 rb" atau "Rp1,2 jt".
+Pakai HANYA nilai dari data ini, jangan menghitung ulang atau mengarang angka. Semua rupiah sudah berbentuk teks siap pakai (contoh: "Rp329 rb", "Rp1,25 jt") -- kutip persis apa adanya, jangan ubah formatnya.
 
 Arti kategori:
 {$labels}

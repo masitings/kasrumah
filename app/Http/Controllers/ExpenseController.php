@@ -58,7 +58,7 @@ class ExpenseController extends Controller
 
         return Inertia::render('kas/expenses', [
             'month' => $requested,
-            'monthLabel' => $start->translatedFormat('F Y'),
+            'monthLabel' => $start->copy()->locale('id')->translatedFormat('F Y'),
             'prevMonth' => $start->copy()->subMonth()->format('Y-m'),
             'nextMonth' => $start->copy()->addMonth()->format('Y-m'),
             'groups' => $groups,

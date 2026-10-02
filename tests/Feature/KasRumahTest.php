@@ -3,7 +3,9 @@
 use App\Models\Expense;
 use App\Models\User;
 use App\Services\ExpenseExtractor;
+use App\Services\WeeklySummary;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Testing\AssertableInertia as Assert;
@@ -164,4 +166,59 @@ test('receipts show endpoint streams image for owner and rejects intruder', func
         ->get("/receipts/{$expense->id}");
 
     $response->assertOk();
+});
+
+test('the narration input formats money and contains no raw integers', function () {
+    Http::fake([
+        '*/api/chat' => Http::response(['message' => ['content' => 'oke']], 200),
+    ]);
+
+    $user = User::factory()->create();
+    $today = Carbon::now('Asia/Jakarta')->toDateString();
+
+    foreach ([['dapur', 329856], ['jajan', 1250000]] as [$category, $amount]) {
+        Expense::create([
+            'user_id' => $user->id,
+            'spent_on' => $today,
+            'amount' => $amount,
+            'category' => $category,
+            'source' => 'text',
+            'status' => 'confirmed',
+        ]);
+    }
+
+    app(WeeklySummary::class)->for($user);
+
+    Http::assertSent(function ($request) {
+        $content = (string) $request['messages'][0]['content'];
+
+        return str_contains($content, 'Rp329 rb')
+            && str_contains($content, 'Rp1,25 jt')
+            && ! str_contains($content, '329856')
+            && ! str_contains($content, '1250000')
+            && ! str_contains($content, '"total_minggu_ini": 1');
+    });
+});
+
+test('rata_rata is null when there are no expenses in the previous four weeks', function () {
+    Http::fake([
+        '*/api/chat' => Http::response(['message' => ['content' => 'oke']], 200),
+    ]);
+
+    $user = User::factory()->create();
+
+    Expense::create([
+        'user_id' => $user->id,
+        'spent_on' => Carbon::now('Asia/Jakarta')->toDateString(),
+        'amount' => 50000,
+        'category' => 'dapur',
+        'source' => 'text',
+        'status' => 'confirmed',
+    ]);
+
+    $facts = app(WeeklySummary::class)->for($user)['facts'];
+
+    expect($facts['rata_rata'])->toBeNull();
+    expect($facts['total_minggu_ini'])->toBe('Rp50 rb');
+    expect($facts['kategori_naik'])->toBe([]);
 });

@@ -3,15 +3,15 @@ import { ArrowUpRight, RefreshCw, Sparkles, TrendingUp, Wallet } from 'lucide-re
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { formatRupiah } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 interface SummaryFacts {
     periode: string;
-    total_minggu_ini: number;
-    per_kategori_minggu_ini: Record<string, number>;
-    rata_rata_per_minggu_4_minggu_terakhir: Record<string, number>;
+    total_minggu_ini: string;
+    per_kategori_minggu_ini: Record<string, string>;
+    rata_rata: Record<string, string> | null;
     pemakaian_budget_bulan_ini_persen: Record<string, number>;
+    kategori_naik?: string[];
 }
 
 interface SummaryData {
@@ -35,9 +35,11 @@ export default function Summary({ summary }: PageProps) {
         });
     };
 
+    const rataRata = facts.rata_rata;
+
     const categories = Object.keys({
         ...facts.per_kategori_minggu_ini,
-        ...facts.rata_rata_per_minggu_4_minggu_terakhir,
+        ...(rataRata ?? {}),
     });
 
     const budgetKeys = Object.keys(facts.pemakaian_budget_bulan_ini_persen || {});
@@ -88,7 +90,7 @@ export default function Summary({ summary }: PageProps) {
                             Total Pengeluaran Minggu Ini
                         </p>
                         <p className="text-2xl font-bold tracking-tight text-neutral-900 dark:text-neutral-50">
-                            {formatRupiah(facts.total_minggu_ini)}
+                            {facts.total_minggu_ini}
                         </p>
                     </CardContent>
                 </Card>
@@ -152,14 +154,24 @@ export default function Summary({ summary }: PageProps) {
                         <CardContent className="space-y-3 pt-4">
                             <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
                                 <TrendingUp className="size-3.5" />
-                                <span>Minggu Ini vs Rata-rata 4 Minggu</span>
+                                <span>
+                                    {rataRata
+                                        ? 'Minggu Ini vs Rata-rata 4 Minggu'
+                                        : 'Pengeluaran Minggu Ini per Kategori'}
+                                </span>
                             </div>
+
+                            {!rataRata && (
+                                <p className="text-[11px] text-neutral-400">
+                                    Belum ada pengeluaran 4 minggu sebelumnya jadi belum bisa dibandingkan.
+                                </p>
+                            )}
 
                             <div className="divide-y divide-neutral-100 text-xs dark:divide-neutral-800">
                                 {categories.map((cat) => {
-                                    const thisWeek = facts.per_kategori_minggu_ini[cat] ?? 0;
-                                    const avg = facts.rata_rata_per_minggu_4_minggu_terakhir[cat] ?? 0;
-                                    const isHigher = thisWeek > avg && avg > 0;
+                                    const thisWeek = facts.per_kategori_minggu_ini[cat];
+                                    const avg = rataRata?.[cat];
+                                    const isHigher = (facts.kategori_naik ?? []).includes(cat);
 
                                     return (
                                         <div key={cat} className="flex items-center justify-between py-2">
@@ -167,14 +179,16 @@ export default function Summary({ summary }: PageProps) {
                                                 <p className="font-semibold capitalize text-neutral-800 dark:text-neutral-200">
                                                     {cat}
                                                 </p>
-                                                <p className="text-[11px] text-neutral-400">
-                                                    Rata-rata: {formatRupiah(avg)}/mgg
-                                                </p>
+                                                {avg && (
+                                                    <p className="text-[11px] text-neutral-400">
+                                                        Rata-rata: {avg}/mgg
+                                                    </p>
+                                                )}
                                             </div>
 
                                             <div className="text-right">
                                                 <p className="font-semibold tabular-nums text-neutral-900 dark:text-neutral-50">
-                                                    {formatRupiah(thisWeek)}
+                                                    {thisWeek ?? '-'}
                                                 </p>
                                                 {isHigher && (
                                                     <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
