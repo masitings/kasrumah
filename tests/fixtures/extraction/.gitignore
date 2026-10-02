@@ -1,0 +1,7 @@
+# Kept local only — sensitive/holdout material must not be committed.
+
+# Contains a medicine name (pharmacy receipt).
+tuning/IMG_1906.jpg
+
+# Contains account / balance information (bank transfer screenshot).
+holdout/IMG_1830.PNG

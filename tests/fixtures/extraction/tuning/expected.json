@@ -1,0 +1,12 @@
+{
+  "IMG_1906.jpg": [{"amount": 25000, "category": "kesehatan", "merchant": "gama"}],
+  "IMG_1908.jpg": [{"amount": 500000, "category": "lainnya", "merchant": "big apple"}],
+  "IMG_1910.jpg": [{"amount": 17500, "category": "jajan", "merchant": "indomaret"}],
+  "beli sayur 45rb sama galon 20rb": [
+    {"amount": 45000, "category": "dapur"},
+    {"amount": 20000, "category": "rumah"}
+  ],
+  "bayar listrik 350 ribu": [{"amount": 350000, "category": "tagihan"}],
+  "grab ke kantor 28rb": [{"amount": 28000, "category": "transport"}],
+  "kondangan 200rb": [{"amount": 200000, "category": "keluarga"}]
+}

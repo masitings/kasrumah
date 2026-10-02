@@ -7,8 +7,8 @@ use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
 
-#[Signature('kas:test-extract {--dir=storage/app/test}')]
-#[Description('Run the Gemma extractor over sample images and typed expenses, compare against expected.json, then report numbers and speed.')]
+#[Signature('kas:test-extract {--set=all : Which fixture set to run (tuning, holdout, all)} {--model= : Override Ollama model for this run} {--runs=1 : Number of runs per case (PASS only if all runs pass)} {--dir= : Custom directory to scan (overrides --set)}')]
+#[Description('Run the Gemma extractor against extraction fixtures with tuning/holdout splits and multi-run consensus.')]
 class TestExtractor extends Command
 {
     /** @var list<string> */
@@ -21,81 +21,247 @@ class TestExtractor extends Command
 
     public function handle(ExpenseExtractor $extractor): int
     {
-        $dir = $this->resolveDir((string) $this->option('dir'));
+        $set = strtolower((string) $this->option('set'));
+        $model = $this->option('model') ? (string) $this->option('model') : null;
+        $runs = max(1, (int) $this->option('runs'));
+        $customDir = $this->option('dir');
+        $effectiveModel = $model ?: (string) config('services.ollama.model');
 
-        if (! is_dir($dir)) {
-            mkdir($dir, 0775, true);
+        $this->info("Running extraction suite [set={$set}, model={$effectiveModel}, runs={$runs}]");
+
+        $cases = $customDir
+            ? $this->loadCustomDir((string) $customDir)
+            : $this->loadFixtureSets($set);
+
+        if ($cases === []) {
+            $this->warn('No test cases found.');
+
+            return self::SUCCESS;
         }
 
-        $expected = $this->expected($dir);
-        $images = $this->imageFiles($dir);
-        $results = [];
-        $rows = [];
-        $passed = 0;
-        $failed = 0;
+        $summary = [
+            'tuning' => ['pass' => 0, 'total' => 0],
+            'holdout' => ['pass' => 0, 'total' => 0],
+            'text' => ['pass' => 0, 'total' => 0],
+            'image_seconds' => [],
+            'text_seconds' => [],
+        ];
 
-        if ($images === []) {
-            $this->warn("No .jpg/.jpeg/.png files in {$dir}. Running text samples only.");
-        }
+        $tableRows = [];
+        $failedCases = [];
 
-        foreach ($images as $path) {
-            [$expenses, $seconds, $error] = $this->measure(
-                fn () => $extractor->fromImage($path)
-            );
+        foreach ($cases as $case) {
+            $runResults = [];
+            $runErrors = [];
+            $allPassed = true;
+            $firstExpenses = [];
 
-            $status = $this->compare($expected[basename($path)] ?? null, $expenses, $error);
+            for ($r = 1; $r <= $runs; $r++) {
+                [$expenses, $seconds, $error] = $case['type'] === 'image'
+                    ? $this->measure(fn () => $extractor->fromImage($case['path'], $model))
+                    : $this->measure(fn () => $extractor->fromText($case['input'], $model));
 
-            if ($status === 'PASS') {
-                $passed++;
-            } elseif ($status !== '— (no expectation)') {
-                $failed++;
+                if ($r === 1) {
+                    $firstExpenses = $expenses;
+                }
+
+                if ($case['type'] === 'image') {
+                    $summary['image_seconds'][] = $seconds;
+                } else {
+                    $summary['text_seconds'][] = $seconds;
+                }
+
+                $status = $this->compare($case['expected'], $expenses, $error);
+                $runResults[] = $status;
+
+                if ($status !== 'PASS') {
+                    $allPassed = false;
+                    $runErrors[] = "run {$r}: {$status}";
+                }
             }
 
-            $results[] = $this->entry('image', basename($path), $expenses, $seconds, $error, $status);
-            $rows = [...$rows, ...$this->tableRows(basename($path), $expenses, $seconds, $error, $status)];
-        }
+            $setKey = $case['set'];
+            $summary[$setKey]['total']++;
 
-        foreach (self::TEXT_SAMPLES as $text) {
-            [$expenses, $seconds, $error] = $this->measure(
-                fn () => $extractor->fromText($text)
-            );
-
-            $status = $this->compare($expected[$text] ?? null, $expenses, $error);
-
-            if ($status === 'PASS') {
-                $passed++;
-            } elseif ($status !== '— (no expectation)') {
-                $failed++;
+            if ($allPassed) {
+                $summary[$setKey]['pass']++;
+            } else {
+                $failedCases[] = [
+                    'set' => $setKey,
+                    'input' => $case['label'],
+                    'expected' => $case['expected'],
+                    'got' => $firstExpenses,
+                    'reasons' => $runErrors,
+                ];
             }
 
-            $results[] = $this->entry('text', $text, $expenses, $seconds, $error, $status);
-            $rows = [...$rows, ...$this->tableRows('"'.$text.'"', $expenses, $seconds, $error, $status)];
+            $passCount = count(array_filter($runResults, fn ($s) => $s === 'PASS'));
+            $statusLabel = $allPassed
+                ? ($runs > 1 ? "PASS ({$runs}/{$runs})" : 'PASS')
+                : "FAIL ({$passCount}/{$runs})";
+
+            $tableRows = [...$tableRows, ...$this->formatRows($case['label'], $setKey, $firstExpenses, $statusLabel)];
         }
 
         $this->table(
-            ['Input', 'Merchant', 'Amount', 'Category', 'Confidence', 'Secs', 'Status'],
-            $rows,
+            ['Set', 'Input', 'Merchant', 'Amount', 'Category', 'Conf', 'Status'],
+            $tableRows,
         );
 
-        $out = $dir.'/results.json';
+        $this->newLine();
+        $this->info('--- Summary ---');
+
+        foreach (['tuning', 'holdout', 'text'] as $k) {
+            $t = $summary[$k]['total'];
+            $p = $summary[$k]['pass'];
+
+            if ($t > 0) {
+                $pct = number_format(($p / $t) * 100, 1);
+                $this->line(sprintf('  %-8s : %d/%d passed (%s%%)', ucfirst($k), $p, $t, $pct));
+            }
+        }
+
+        $avgImg = count($summary['image_seconds']) > 0
+            ? number_format(array_sum($summary['image_seconds']) / count($summary['image_seconds']), 2)
+            : '0.00';
+        $avgTxt = count($summary['text_seconds']) > 0
+            ? number_format(array_sum($summary['text_seconds']) / count($summary['text_seconds']), 2)
+            : '0.00';
+
+        $this->line("  Avg speed: {$avgImg}s / image, {$avgTxt}s / text");
+
+        if ($failedCases !== []) {
+            $this->newLine();
+            $this->warn('--- Failures Detail ---');
+
+            foreach ($failedCases as $f) {
+                $this->line("• [{$f['set']}] {$f['input']}");
+                $this->line('  Reasons: '.implode(' | ', $f['reasons']));
+                $this->line('  Got: '.json_encode($f['got'], JSON_UNESCAPED_SLASHES));
+            }
+        }
+
         file_put_contents(
-            $out,
-            json_encode($results, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            base_path('storage/app/extraction-results.json'),
+            json_encode([
+                'model' => $effectiveModel,
+                'runs' => $runs,
+                'set' => $set,
+                'summary' => [
+                    'tuning' => $summary['tuning'],
+                    'holdout' => $summary['holdout'],
+                    'text' => $summary['text'],
+                    'avg_image_seconds' => (float) $avgImg,
+                    'avg_text_seconds' => (float) $avgTxt,
+                ],
+                'failures' => $failedCases,
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
         );
 
-        $this->info("Regression: {$passed} PASS, {$failed} FAIL");
-        $this->info('Full results written to '.$out);
+        return $failedCases === [] ? self::SUCCESS : self::FAILURE;
+    }
 
-        return $failed > 0 ? self::FAILURE : self::SUCCESS;
+    /**
+     * @return list<array{type: string, set: string, input: string, path: string, label: string, expected: array|null}>
+     */
+    private function loadFixtureSets(string $set): array
+    {
+        $base = base_path('tests/fixtures/extraction');
+        $cases = [];
+
+        if (in_array($set, ['tuning', 'all'], true)) {
+            $cases = [...$cases, ...$this->loadFromDir($base.'/tuning', 'tuning')];
+
+            $expectedTuning = $this->readExpected($base.'/tuning/expected.json');
+
+            foreach (self::TEXT_SAMPLES as $text) {
+                $cases[] = [
+                    'type' => 'text',
+                    'set' => 'text',
+                    'input' => $text,
+                    'path' => '',
+                    'label' => '"'.$text.'"',
+                    'expected' => $expectedTuning[$text] ?? null,
+                ];
+            }
+        }
+
+        if (in_array($set, ['holdout', 'all'], true)) {
+            $cases = [...$cases, ...$this->loadFromDir($base.'/holdout', 'holdout')];
+        }
+
+        return $cases;
+    }
+
+    /**
+     * @return list<array{type: string, set: string, input: string, path: string, label: string, expected: array|null}>
+     */
+    private function loadFromDir(string $dir, string $setName): array
+    {
+        if (! is_dir($dir)) {
+            $this->warn("Directory not found: {$dir}");
+
+            return [];
+        }
+
+        $expected = $this->readExpected($dir.'/expected.json');
+        $cases = [];
+
+        foreach ($this->imageFiles($dir) as $path) {
+            $filename = basename($path);
+            $cases[] = [
+                'type' => 'image',
+                'set' => $setName,
+                'input' => $filename,
+                'path' => $path,
+                'label' => $filename,
+                'expected' => $expected[$filename] ?? null,
+            ];
+        }
+
+        // Expected images that are absent on disk (e.g. gitignored sensitive photos).
+        foreach ($expected as $key => $value) {
+            if (! str_contains($key, '.')) {
+                continue;
+            }
+
+            if (! collect($cases)->contains(fn (array $c) => $c['input'] === $key)) {
+                $this->line("<comment>Note: {$key} listed in {$setName}/expected.json but missing on disk (skipped).</comment>");
+            }
+        }
+
+        return $cases;
+    }
+
+    /**
+     * @return list<array{type: string, set: string, input: string, path: string, label: string, expected: array|null}>
+     */
+    private function loadCustomDir(string $dir): array
+    {
+        $real = str_starts_with($dir, DIRECTORY_SEPARATOR) ? $dir : base_path($dir);
+        $cases = $this->loadFromDir($real, 'custom');
+
+        $expected = $this->readExpected($real.'/expected.json');
+
+        foreach (self::TEXT_SAMPLES as $text) {
+            $cases[] = [
+                'type' => 'text',
+                'set' => 'text',
+                'input' => $text,
+                'path' => '',
+                'label' => '"'.$text.'"',
+                'expected' => $expected[$text] ?? null,
+            ];
+        }
+
+        return $cases;
     }
 
     /**
      * @return array<string, array<int, array<string, mixed>>>
      */
-    private function expected(string $dir): array
+    private function readExpected(string $file): array
     {
-        $file = $dir.'/expected.json';
-
         if (! is_file($file)) {
             return [];
         }
@@ -113,7 +279,7 @@ class TestExtractor extends Command
             return 'FAIL — '.$error;
         }
 
-        if ($expected === null) {
+        if ($expected === null || $expected === []) {
             return '— (no expectation)';
         }
 
@@ -130,11 +296,11 @@ class TestExtractor extends Command
                 continue;
             }
 
-            if ((int) $exp['amount'] !== (int) $got['amount']) {
+            if (isset($exp['amount']) && (int) $exp['amount'] !== (int) $got['amount']) {
                 $fails[] = "#{$i} amount expected {$exp['amount']}, got {$got['amount']}";
             }
 
-            if (($exp['category'] ?? null) !== ($got['category'] ?? null)) {
+            if (isset($exp['category']) && $exp['category'] !== ($got['category'] ?? null)) {
                 $fails[] = "#{$i} category expected {$exp['category']}, got {$got['category']}";
             }
 
@@ -171,36 +337,12 @@ class TestExtractor extends Command
 
     /**
      * @param  array<int, array<string, mixed>>  $expenses
-     * @return array<string, mixed>
-     */
-    private function entry(string $type, string $input, array $expenses, float $seconds, ?string $error, string $status): array
-    {
-        return [
-            'type' => $type,
-            'input' => $input,
-            'seconds' => $seconds,
-            'expenses' => $expenses,
-            'error' => $error,
-            'status' => $status,
-        ];
-    }
-
-    /**
-     * @param  array<int, array<string, mixed>>  $expenses
      * @return array<int, array<int, string>>
      */
-    private function tableRows(string $label, array $expenses, float $seconds, ?string $error, string $status): array
+    private function formatRows(string $label, string $set, array $expenses, string $status): array
     {
         if ($expenses === []) {
-            return [[
-                $label,
-                $error ? 'ERROR' : '-',
-                '-',
-                '-',
-                '-',
-                number_format($seconds, 2),
-                $status,
-            ]];
+            return [[$set, $label, '-', '-', '-', '-', $status]];
         }
 
         $rows = [];
@@ -208,12 +350,12 @@ class TestExtractor extends Command
 
         foreach ($expenses as $i => $row) {
             $rows[] = [
-                $label,
+                $i === 0 ? $set : '',
+                $i === 0 ? $label : '',
                 (string) ($row['merchant'] ?? '-'),
                 number_format((int) $row['amount'], 0, ',', '.'),
                 (string) $row['category'],
                 number_format((float) $row['confidence'], 2),
-                number_format($seconds, 2),
                 $i === $last ? $status : '-',
             ];
         }
@@ -237,10 +379,5 @@ class TestExtractor extends Command
         ksort($files);
 
         return array_values($files);
-    }
-
-    private function resolveDir(string $dir): string
-    {
-        return str_starts_with($dir, DIRECTORY_SEPARATOR) ? $dir : base_path($dir);
     }
 }
