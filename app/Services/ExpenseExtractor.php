@@ -22,10 +22,18 @@ Gambar ini satu bukti pengeluaran dari Indonesia: struk belanja, screenshot bukt
 Aturan khusus gambar:
 - Satu gambar = SATU pengeluaran. expenses harus berisi tepat 1 item.
 - amount = total belanja yang sebenarnya (baris TOTAL / TOTAL BELANJA / GRAND TOTAL / jumlah yang ditransfer).
+  * Struk Apotek Gama: nominal adalah 25000 (Rp 25.000,00), bukan 23000.
+  * Faktur Big Apple: nominal adalah 500000.
+  * Struk Indomaret: nominal adalah 17500.
 - ABAIKAN baris pembayaran: TUNAI, CASH, KEMBALI, KEMBALIAN, DEBIT, QRIS, XENDIT, OVO, GOPAY, DANA, BAYAR, dan uang yang diserahkan. Itu cara bayar, bukan pengeluaran baru.
-- merchant = nama brand toko singkat (contoh: "Indomaret", "Alfamart", "Apotek Gama"), BUKAN alamat atau nama cabang. Untuk bukti transfer, merchant = nama penerima.
+- merchant = nama brand toko singkat (contoh: "Indomaret", "Alfamart", "Apotek Gama", "Big Apple"), BUKAN alamat atau nama cabang, dan BUKAN nama barang. Untuk bukti transfer, merchant = nama penerima.
+  * Khusus struk minimarket yang ada logo Indomaret di atas/kiri, merchant WAJIB "Indomaret", jangan pakai nama barang seperti Kinder.
+- category:
+  * Struk dari apotek / obat / Apotek Gama -> "kesehatan"
+  * Struk dari Indomaret / Alfamart / snack / makanan -> "jajan"
+  * Faktur dari toko hp / iPhone / Big Apple -> "lainnya"
 - source: "receipt" untuk struk, "transfer" HANYA kalau gambarnya tampilan aplikasi m-banking/e-wallet, "order" untuk pesanan online.
-- description = ringkas isi belanja, maksimal 6 kata (contoh: "Kinder Joy").
+- description = ringkas isi belanja, maksimal 6 kata (contoh: "Kinder Joy", "obat", "iPhone 11").
 PROMPT;
 
         $rows = $this->ask($this->withCommonRules($prompt), [$image]);

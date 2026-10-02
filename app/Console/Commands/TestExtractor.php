@@ -8,7 +8,7 @@ use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
 
 #[Signature('kas:test-extract {--dir=storage/app/test}')]
-#[Description('Run the Gemma extractor over sample receipt images and typed expenses, then report numbers and speed.')]
+#[Description('Run the Gemma extractor over sample images and typed expenses, compare against expected.json, then report numbers and speed.')]
 class TestExtractor extends Command
 {
     /** @var list<string> */
@@ -27,9 +27,12 @@ class TestExtractor extends Command
             mkdir($dir, 0775, true);
         }
 
+        $expected = $this->expected($dir);
         $images = $this->imageFiles($dir);
         $results = [];
         $rows = [];
+        $passed = 0;
+        $failed = 0;
 
         if ($images === []) {
             $this->warn("No .jpg/.jpeg/.png files in {$dir}. Running text samples only.");
@@ -40,8 +43,16 @@ class TestExtractor extends Command
                 fn () => $extractor->fromImage($path)
             );
 
-            $results[] = $this->entry('image', basename($path), $expenses, $seconds, $error);
-            $rows = [...$rows, ...$this->tableRows(basename($path), $expenses, $seconds, $error)];
+            $status = $this->compare($expected[basename($path)] ?? null, $expenses, $error);
+
+            if ($status === 'PASS') {
+                $passed++;
+            } elseif ($status !== '— (no expectation)') {
+                $failed++;
+            }
+
+            $results[] = $this->entry('image', basename($path), $expenses, $seconds, $error, $status);
+            $rows = [...$rows, ...$this->tableRows(basename($path), $expenses, $seconds, $error, $status)];
         }
 
         foreach (self::TEXT_SAMPLES as $text) {
@@ -49,12 +60,20 @@ class TestExtractor extends Command
                 fn () => $extractor->fromText($text)
             );
 
-            $results[] = $this->entry('text', $text, $expenses, $seconds, $error);
-            $rows = [...$rows, ...$this->tableRows('"'.$text.'"', $expenses, $seconds, $error)];
+            $status = $this->compare($expected[$text] ?? null, $expenses, $error);
+
+            if ($status === 'PASS') {
+                $passed++;
+            } elseif ($status !== '— (no expectation)') {
+                $failed++;
+            }
+
+            $results[] = $this->entry('text', $text, $expenses, $seconds, $error, $status);
+            $rows = [...$rows, ...$this->tableRows('"'.$text.'"', $expenses, $seconds, $error, $status)];
         }
 
         $this->table(
-            ['Input', 'Merchant', 'Amount', 'Category', 'Confidence', 'Seconds'],
+            ['Input', 'Merchant', 'Amount', 'Category', 'Confidence', 'Secs', 'Status'],
             $rows,
         );
 
@@ -63,9 +82,73 @@ class TestExtractor extends Command
             $out,
             json_encode($results, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
         );
+
+        $this->info("Regression: {$passed} PASS, {$failed} FAIL");
         $this->info('Full results written to '.$out);
 
-        return self::SUCCESS;
+        return $failed > 0 ? self::FAILURE : self::SUCCESS;
+    }
+
+    /**
+     * @return array<string, array<int, array<string, mixed>>>
+     */
+    private function expected(string $dir): array
+    {
+        $file = $dir.'/expected.json';
+
+        if (! is_file($file)) {
+            return [];
+        }
+
+        return json_decode((string) file_get_contents($file), true) ?? [];
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>|null  $expected
+     * @param  array<int, array<string, mixed>>  $expenses
+     */
+    private function compare(?array $expected, array $expenses, ?string $error): string
+    {
+        if ($error !== null) {
+            return 'FAIL — '.$error;
+        }
+
+        if ($expected === null) {
+            return '— (no expectation)';
+        }
+
+        $fails = [];
+
+        if (count($expected) !== count($expenses)) {
+            $fails[] = 'row count expected '.count($expected).', got '.count($expenses);
+        }
+
+        foreach ($expected as $i => $exp) {
+            $got = $expenses[$i] ?? null;
+
+            if ($got === null) {
+                continue;
+            }
+
+            if ((int) $exp['amount'] !== (int) $got['amount']) {
+                $fails[] = "#{$i} amount expected {$exp['amount']}, got {$got['amount']}";
+            }
+
+            if (($exp['category'] ?? null) !== ($got['category'] ?? null)) {
+                $fails[] = "#{$i} category expected {$exp['category']}, got {$got['category']}";
+            }
+
+            if (! empty($exp['merchant'])) {
+                $needle = mb_strtolower((string) $exp['merchant']);
+                $haystack = mb_strtolower((string) ($got['merchant'] ?? ''));
+
+                if (! str_contains($haystack, $needle)) {
+                    $fails[] = "#{$i} merchant expected ~\"{$exp['merchant']}\", got \"{$got['merchant']}\"";
+                }
+            }
+        }
+
+        return $fails === [] ? 'PASS' : 'FAIL — '.implode('; ', $fails);
     }
 
     /**
@@ -90,7 +173,7 @@ class TestExtractor extends Command
      * @param  array<int, array<string, mixed>>  $expenses
      * @return array<string, mixed>
      */
-    private function entry(string $type, string $input, array $expenses, float $seconds, ?string $error): array
+    private function entry(string $type, string $input, array $expenses, float $seconds, ?string $error, string $status): array
     {
         return [
             'type' => $type,
@@ -98,6 +181,7 @@ class TestExtractor extends Command
             'seconds' => $seconds,
             'expenses' => $expenses,
             'error' => $error,
+            'status' => $status,
         ];
     }
 
@@ -105,27 +189,36 @@ class TestExtractor extends Command
      * @param  array<int, array<string, mixed>>  $expenses
      * @return array<int, array<int, string>>
      */
-    private function tableRows(string $label, array $expenses, float $seconds, ?string $error): array
+    private function tableRows(string $label, array $expenses, float $seconds, ?string $error, string $status): array
     {
         if ($expenses === []) {
             return [[
                 $label,
                 $error ? 'ERROR' : '-',
                 '-',
-                $error ? mb_strimwidth($error, 0, 40, '...') : '-',
+                '-',
                 '-',
                 number_format($seconds, 2),
+                $status,
             ]];
         }
 
-        return array_map(fn (array $row) => [
-            $label,
-            (string) ($row['merchant'] ?? '-'),
-            number_format((int) $row['amount'], 0, ',', '.'),
-            (string) $row['category'],
-            number_format((float) $row['confidence'], 2),
-            number_format($seconds, 2),
-        ], $expenses);
+        $rows = [];
+        $last = count($expenses) - 1;
+
+        foreach ($expenses as $i => $row) {
+            $rows[] = [
+                $label,
+                (string) ($row['merchant'] ?? '-'),
+                number_format((int) $row['amount'], 0, ',', '.'),
+                (string) $row['category'],
+                number_format((float) $row['confidence'], 2),
+                number_format($seconds, 2),
+                $i === $last ? $status : '-',
+            ];
+        }
+
+        return $rows;
     }
 
     /**
