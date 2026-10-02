@@ -12,50 +12,54 @@ use Illuminate\Support\Facades\Http;
  */
 class ExpenseExtractor
 {
-    public function fromImage(string $absolutePath): array
+    public function fromImage(string $absolutePath, ?string $model = null): array
     {
         $image = base64_encode($this->prepareImage($absolutePath));
 
         $prompt = <<<'PROMPT'
-Gambar ini satu bukti pengeluaran dari Indonesia: struk belanja, screenshot bukti transfer m-banking, atau screenshot pesanan online.
+Gambar ini satu bukti pengeluaran dari Indonesia: struk belanja kertas, faktur penjualan, screenshot bukti transfer m-banking/e-wallet, atau screenshot rincian pesanan online.
 
 Aturan khusus gambar:
-- Satu gambar = SATU pengeluaran. expenses harus berisi tepat 1 item.
-- amount = total belanja yang sebenarnya (baris TOTAL / TOTAL BELANJA / GRAND TOTAL / jumlah yang ditransfer).
-  * Struk Apotek Gama: nominal adalah 25000 (Rp 25.000,00), bukan 23000.
-  * Faktur Big Apple: nominal adalah 500000.
-  * Struk Indomaret: nominal adalah 17500.
-- ABAIKAN baris pembayaran: TUNAI, CASH, KEMBALI, KEMBALIAN, DEBIT, QRIS, XENDIT, OVO, GOPAY, DANA, BAYAR, dan uang yang diserahkan. Itu cara bayar, bukan pengeluaran baru.
-- merchant = nama brand toko singkat (contoh: "Indomaret", "Alfamart", "Apotek Gama", "Big Apple"), BUKAN alamat atau nama cabang, dan BUKAN nama barang. Untuk bukti transfer, merchant = nama penerima.
-  * Khusus struk minimarket yang ada logo Indomaret di atas/kiri, merchant WAJIB "Indomaret", jangan pakai nama barang seperti Kinder.
-- category:
-  * Struk dari apotek / obat / Apotek Gama -> "kesehatan"
-  * Struk dari Indomaret / Alfamart / snack / makanan -> "jajan"
-  * Faktur dari toko hp / iPhone / Big Apple -> "lainnya"
-- source: "receipt" untuk struk, "transfer" HANYA kalau gambarnya tampilan aplikasi m-banking/e-wallet, "order" untuk pesanan online.
-- description = ringkas isi belanja, maksimal 6 kata (contoh: "Kinder Joy", "obat", "iPhone 11").
+- Satu gambar = SATU pengeluaran. Array expenses harus berisi tepat 1 item.
+- merchant: nama brand atau nama toko. Carilah satu kalimat / wordmark yang paling menonjol sebagai NAMA TOKO (biasanya paling besar, paling atas, atau di dekat logo).
+  * Jika yang terbaca adalah alamat (Jl./Jalan/Perum/Kel./Kec./Kota/Alamat) BUKAN nama toko, abaikan dan cari lagi di bagian lain struk.
+  * Selalu isi string merchant; jangan biarkan kosong. Untuk bukti transfer, merchant = nama penerima.
+- category: tentukan berdasarkan jenis toko dan barang utamanya:
+  * apotek / obat / vitamin / klinik / dokter -> "kesehatan"
+  * minimarket / supermarket / warung: makanan, minuman, snack, kopi, jajan -> "jajan"; sayur, beras, lauk, bumbu dapur -> "dapur"; sabun, gas, galon, perlengkapan rumah -> "rumah"
+  * toko elektronik / hp / gadget / barang mahal tanpa kategori pas -> "lainnya"
+  * tagihan listrik / air / internet / pulsa -> "tagihan"
+  * bensin / ojol / taksi / parkir -> "transport"
+  * Kalau jenis tak bisa ditebak dari barang, pakai "lainnya".
+- amount: total uang yang dibayar (angka bulat rupiah tanpa desimal dan tanpa titik).
+  * Baca baris TOTAL, TOTAL BELANJA, GRAND TOTAL, TOTAL HARGA, atau JUMLAH DITRANSFER (total akhir setelah diskon/ongkir, bukan subtotal).
+  * Angka di belakang koma seperti ',00' atau ',0' adalah desimal/sen: buang sen tersebut, JANGAN ubah menjadi nol tambahan (contoh: '25.000,00' = 25000, BUKAN 2500000 atau 230000).
+  * Hati-hati membaca digit cetakan struk titik matrix: jangan sampai angka '5' terbaca '3' atau sebaliknya.
+  * ABAIKAN baris pembayaran: TUNAI, CASH, KEMBALI, KEMBALIAN, DEBIT, QRIS, XENDIT, GOPAY, DANA, BAYAR, atau nominal uang yang diserahkan.
+- source: "receipt" untuk struk/faktur belanja fisik, "transfer" untuk screenshot m-banking/e-wallet, "order" untuk rincian pesanan online.
+- description: ringkas isi belanja atau nama barang utama, maksimal 6 kata (contoh: "belanja bulanan", "makan siang", "obat flu").
 PROMPT;
 
-        $rows = $this->ask($this->withCommonRules($prompt), [$image]);
+        $rows = $this->ask($this->withCommonRules($prompt), [$image], $model);
 
         // Belt and braces: one image is one expense, keep the most confident row.
         return collect($rows)->sortByDesc('confidence')->take(1)->values()->all();
     }
 
-    public function fromText(string $text): array
+    public function fromText(string $text, ?string $model = null): array
     {
         $prompt = <<<PROMPT
 Ini catatan pengeluaran yang diketik atau didiktekan: "{$text}"
 
 Aturan khusus teks:
 - Setiap barang/keperluan dengan nominalnya sendiri = SATU item terpisah.
-  Contoh: "beli sayur 45rb sama galon 20rb" = 2 item: sayur 45000 (dapur) dan galon 20000 (rumah).
-- merchant = nama toko/layanan kalau disebut (contoh: "Grab", "PLN"), kalau tidak ada isi null.
-- description = barang atau keperluannya (contoh: "sayur", "galon", "kondangan").
+  Contoh: "beli rokok 15rb sama sabun 12rb" = 2 item: rokok 15000 (lainnya) dan sabun 12000 (rumah).
+- merchant = nama toko/layanan kalau disebut (isi null kalau tidak disebut).
+- description = barang atau keperluannya.
 - source selalu "text".
 PROMPT;
 
-        return $this->ask($this->withCommonRules($prompt));
+        return $this->ask($this->withCommonRules($prompt), [], $model);
     }
 
     private function withCommonRules(string $specific): string
@@ -68,7 +72,9 @@ PROMPT;
 
 Aturan umum:
 - Hari ini tanggal {$today}. Kalau tanggal tidak terlihat atau tidak disebut, pakai hari ini.
-- amount angka bulat rupiah tanpa titik. "rb"/"ribu"/"k" = x1000, "jt"/"juta" = x1000000.
+- amount angka bulat rupiah penuh (contoh: 350000, bukan 350).
+  * Satuan "rb", "ribu", atau "k" = KALIKAN 1000 (contoh: 350 ribu = 350000, 45rb = 45000, 28rb = 28000, 200rb = 200000).
+  * Satuan "jt" atau "juta" = KALIKAN 1000000 (contoh: 1,5 juta = 1500000).
 - category wajib salah satu kunci berikut:
 {$categories}
 - confidence 0 sampai 1, seberapa yakin kamu dengan nominalnya.
@@ -102,16 +108,18 @@ PROMPT;
         ];
     }
 
-    private function ask(string $prompt, array $images = []): array
+    private function ask(string $prompt, array $images = [], ?string $model = null): array
     {
         $message = ['role' => 'user', 'content' => $prompt];
         if ($images) {
             $message['images'] = $images;
         }
 
+        $targetModel = $model ?: config('services.ollama.model');
+
         $content = Http::timeout(120)
             ->post(config('services.ollama.url').'/api/chat', [
-                'model' => config('services.ollama.model'),
+                'model' => $targetModel,
                 'messages' => [$message],
                 'format' => $this->schema(), // Ollama structured outputs
                 'stream' => false,
