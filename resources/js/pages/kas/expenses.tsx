@@ -63,6 +63,10 @@ export default function Expenses({
             <Head title="Pengeluaran" />
 
             <div className="space-y-4">
+                <div>
+                    <h1 className="text-xl font-bold tracking-tight">Pengeluaran</h1>
+                </div>
+
                 {/* Month Switcher */}
                 <div className="flex items-center justify-between rounded-xl border border-neutral-200/80 bg-white p-2 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
                     <Link

@@ -5,27 +5,27 @@ namespace App\Http\Controllers;
 use App\Models\Expense;
 use App\Support\Categories;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Inertia\Inertia;
 use Inertia\Response;
 
 class ExpenseController extends Controller
 {
-    /** Month switcher shows the requested period (default current month). */
+    /** Confirmed expenses for the selected month (default: current month). */
     public function index(Request $request): Response
     {
         $requested = (string) $request->query('month');
-        $requested = preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', $requested) === 1
-            ? $requested
-            : now('Asia/Jakarta')->format('Y-m');
 
-        [$year, $month] = explode('-', $requested);
+        if (preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', $requested) !== 1) {
+            $requested = Carbon::now('Asia/Jakarta')->format('Y-m');
+        }
+
+        $start = Carbon::parse($requested.'-01')->startOfMonth();
+        $end = $start->copy()->endOfMonth();
 
         $expenses = Expense::where('user_id', $request->user()->id)
             ->where('status', 'confirmed')
-            ->whereBetween('spent_on', [
-                $requested.'-01',
-                $requested.'-'.now('Asia/Jakarta')->setDate((int) $year, (int) $month, 1)->endOfMonth()->toDateString(),
-            ])
+            ->whereBetween('spent_on', [$start->toDateString(), $end->toDateString()])
             ->orderByDesc('spent_on')
             ->orderByDesc('id')
             ->get();
